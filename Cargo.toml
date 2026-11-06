@@ -1,5 +1,5 @@
 [package]
-name = "physical"
+name = "physical_never_dies"
 version = "1.0.0"
 edition = "2021"
 
@@ -13,6 +13,7 @@ windows = { version = "0.52", features = [
     "Win32_System_LibraryLoader",
     "Win32_System_Diagnostics",
     "Win32_System_Diagnostics_Debug",
+    "Win32_Storage_FileSystem",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Globalization",
 ] }

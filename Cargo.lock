@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "physical"
+name = "physical_never_dies"
 version = "1.0.0"
 dependencies = [
  "ctor",

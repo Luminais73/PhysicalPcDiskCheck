@@ -1,124 +1,124 @@
-# Physical : vérification de licence par disque
+# Physical Never Dies: disc license check
 
-DLL Windows écrite en Rust qui vérifie la présence d'un disque (ou d'un lecteur) contenant une licence valide avant de laisser un jeu se lancer. Si la licence est absente ou invalide, un message d'erreur est affiché dans la langue de Windows puis le jeu se ferme.
+A Windows DLL written in Rust that checks for a disc (or drive) containing a valid license before letting a game start. If the license is missing or invalid, an error message is shown in the Windows display language and the game closes.
 
-Deux méthodes d'installation sont proposées :
+Two installation methods are provided:
 
-- **Hook** (recommandée) : un `winmm.dll` (ou `version.dll`) à copier à côté du jeu charge automatiquement `Physical.dll`. Aucun outil nécessaire.
-- **Import** : ajout manuel de `Physical.dll` dans l'exécutable du jeu avec CFF Explorer.
+- **Hook** (recommended): a `winmm.dll` (or `version.dll`) placed next to the game automatically loads `PhysicalNeverDies.dll`. No extra tools needed.
+- **Import**: manually add `PhysicalNeverDies.dll` to the game's executable using CFF Explorer.
 
-## Sommaire
+## Table of contents
 
-- [Contenu du dossier Output](#contenu-du-dossier-output)
-- [Fonctionnement](#fonctionnement)
-- [Installation avec le Hook](#installation-avec-le-hook-recommandée)
-- [Installation avec CFF Explorer](#installation-avec-cff-explorer-import)
+- [Output folder contents](#output-folder-contents)
+- [How it works](#how-it-works)
+- [Installation with the Hook](#installation-with-the-hook-recommended)
+- [Installation with CFF Explorer](#installation-with-cff-explorer-import)
 - [Configuration](#configuration)
-- [Compilation](#compilation)
-- [Langues des messages](#langues-des-messages)
-- [Messages d'erreur](#messages-derreur)
-- [Limitation connue](#limitation-connue)
-- [Dépannage](#dépannage)
+- [Building](#building)
+- [Message languages](#message-languages)
+- [Error messages](#error-messages)
+- [Known limitation](#known-limitation)
+- [Troubleshooting](#troubleshooting)
 
-## Contenu du dossier Output
+## Output folder contents
 
 ```
 Output/
 ├── Hook/
 │   ├── x64/
-│   │   ├── winmm.dll            (renommable en version.dll)
-│   │   ├── Physical.dll
-│   │   ├── Physical.ini
+│   │   ├── winmm.dll            (can be renamed to version.dll)
+│   │   ├── PhysicalNeverDies.dll
+│   │   ├── PhysicalNeverDies.ini
 │   │   └── LicensePhysical.txt
 │   └── x86/
-│       ├── winmm.dll            (renommable en version.dll)
-│       ├── Physical.dll
-│       ├── Physical.ini
+│       ├── winmm.dll            (can be renamed to version.dll)
+│       ├── PhysicalNeverDies.dll
+│       ├── PhysicalNeverDies.ini
 │       └── LicensePhysical.txt
 └── Import/
     ├── x64/
-    │   ├── Physical.dll
-    │   ├── Physical.ini
+    │   ├── PhysicalNeverDies.dll
+    │   ├── PhysicalNeverDies.ini
     │   └── LicensePhysical.txt
     └── x86/
-        ├── Physical.dll
-        ├── Physical.ini
+        ├── PhysicalNeverDies.dll
+        ├── PhysicalNeverDies.ini
         └── LicensePhysical.txt
 ```
 
-Chaque dossier est autonome : tous les fichiers nécessaires sont fournis.
+Each folder is self-contained: all required files are included.
 
-| Fichier | Rôle | Où le placer |
+| File | Purpose | Where to put it |
 |---|---|---|
-| `winmm.dll` (Hook uniquement) | Charge automatiquement `Physical.dll` au lancement du jeu. | Dossier du jeu, à côté de l'exécutable. |
-| `Physical.dll` | Effectue la vérification de la licence. | Dossier du jeu, à côté de l'exécutable. |
-| `Physical.ini` | Configuration (vérification activée, nom du jeu, lecteur). | Dossier du jeu, à côté de l'exécutable. |
-| `LicensePhysical.txt` | Licence à vérifier. | **Racine du disque** ou de la clé USB à utiliser. |
+| `winmm.dll` (Hook only) | Automatically loads `PhysicalNeverDies.dll` when the game starts. | Game folder, next to the executable. |
+| `PhysicalNeverDies.dll` | Performs the license check. | Game folder, next to the executable. |
+| `PhysicalNeverDies.ini` | Configuration (check enabled, game name, drive). | Game folder, next to the executable. |
+| `LicensePhysical.txt` | The license to verify. | **Root of the disc** or USB drive to use. |
 
-| Dossier | Usage |
+| Folder | Usage |
 |---|---|
-| `Hook` | Installation automatique : le `winmm.dll` charge `Physical.dll`. |
-| `Import` | Pour les utilisateurs de **CFF Explorer** qui veulent ajouter `Physical.dll` à la table d'import de l'exécutable. |
-| `x64` / `x86` | Choisis le dossier qui correspond à l'architecture du jeu (64 bits ou 32 bits). |
+| `Hook` | Automatic installation: `winmm.dll` loads `PhysicalNeverDies.dll`. |
+| `Import` | For **CFF Explorer** users who want to add `PhysicalNeverDies.dll` to the executable's import table. |
+| `x64` / `x86` | Pick the folder that matches the game's architecture (64-bit or 32-bit). |
 
-> Le dossier doit correspondre à l'architecture du **jeu**, pas à celle de Windows. Un jeu 32 bits sur un Windows 64 bits utilise `x86`.
+> The folder must match the architecture of the **game**, not of Windows. A 32-bit game running on 64-bit Windows uses `x86`.
 
-## Fonctionnement
+## How it works
 
-1. Au chargement de la DLL, la fonction `init()` s'exécute automatiquement (grâce à `ctor`).
-2. Elle désactive les boîtes système « Insérez un disque » (`SetErrorMode`) pour que les lecteurs vides ou absents (A:, B:, lecteur optique vide) ne bloquent pas la vérification.
-3. Elle lit `Physical.ini` pour savoir si la vérification est activée, quel est le nom du jeu (`GameName`) et, éventuellement, quel lecteur scanner (`Drive`).
-4. Si la vérification est activée, elle cherche `LicensePhysical.txt` à la racine du lecteur indiqué, ou de `A:\` à `Z:\` si aucun lecteur n'est précisé.
-5. Elle vérifie que ce fichier contient `license = <GameName>`.
-6. En cas d'échec, une boîte de dialogue d'erreur s'affiche et le processus est arrêté (`exit(1)`).
+1. When the DLL is loaded, the `init()` function runs automatically (thanks to `ctor`).
+2. It disables the system "Insert a disk" dialogs (`SetErrorMode`) so that empty or missing drives (A:, B:, an empty optical drive) do not block the check.
+3. It reads `PhysicalNeverDies.ini` to find out whether the check is enabled, what the game name is (`GameName`) and, optionally, which drive to scan (`Drive`).
+4. If the check is enabled, it looks for `LicensePhysical.txt` at the root of the specified drive, or on all detected drives (fixed, removable and optical drives; network drives are ignored) if no drive is specified. The check succeeds as soon as one drive contains a valid license.
+5. It verifies that the file contains `license = <GameName>`.
+6. On failure, an error dialog is displayed and the process is terminated (`exit(1)`).
 
-## Installation avec le Hook (recommandée)
+## Installation with the Hook (recommended)
 
-1. Repère l'architecture du jeu (64 ou 32 bits). Dans le Gestionnaire des tâches, les processus 32 bits sont suivis de « (32 bits) ».
-2. Ouvre `Output/Hook/x64/` ou `Output/Hook/x86/` selon l'architecture du jeu.
-3. Copie dans le dossier du jeu, à côté de l'exécutable :
+1. Find out the game's architecture (64-bit or 32-bit). In Task Manager, 32-bit processes are followed by "(32 bit)".
+2. Open `Output/Hook/x64/` or `Output/Hook/x86/` depending on the game's architecture.
+3. Copy the following files into the game folder, next to the executable:
    - `winmm.dll`
-   - `Physical.dll`
-   - `Physical.ini`
-4. Place `LicensePhysical.txt` à la racine du disque ou de la clé USB à utiliser.
-5. Adapte `Physical.ini` si besoin (voir [Configuration](#configuration)).
-6. Lance le jeu : `winmm.dll` charge `Physical.dll` automatiquement et la vérification s'exécute.
+   - `PhysicalNeverDies.dll`
+   - `PhysicalNeverDies.ini`
+4. Put `LicensePhysical.txt` at the root of the disc or USB drive you want to use.
+5. Adjust `PhysicalNeverDies.ini` if needed (see [Configuration](#configuration)).
+6. Launch the game: `winmm.dll` loads `PhysicalNeverDies.dll` automatically and the check runs.
 
-### `winmm.dll` ou `version.dll` ?
+### `winmm.dll` or `version.dll`?
 
-Le hook peut être renommé selon la DLL système que le jeu charge :
+The hook can be renamed depending on which system DLL the game loads:
 
-- Essaie d'abord avec `winmm.dll`.
-- Si le jeu ne le charge pas (aucune vérification, aucun message), renomme-le en `version.dll`.
-- N'utilise **qu'un seul** des deux noms à la fois.
+- Try `winmm.dll` first.
+- If the game does not load it (no check, no message), rename it to `version.dll`.
+- Use **only one** of the two names at a time.
 
-## Installation avec CFF Explorer (Import)
+## Installation with CFF Explorer (Import)
 
-1. Ouvre `Output/Import/x64/` ou `Output/Import/x86/` selon l'architecture du jeu.
-2. Copie dans le dossier du jeu, à côté de l'exécutable :
-   - `Physical.dll`
-   - `Physical.ini`
-3. Fais une copie de sauvegarde de l'exécutable du jeu.
-4. Ouvre l'exécutable avec **CFF Explorer** :
-   - va dans **Import Directory**,
-   - clique droit, puis **Add**, et sélectionne `Physical.dll`,
-   - coche la fonction `check_disk`,
-   - sauvegarde l'exécutable.
-5. Place `LicensePhysical.txt` à la racine du disque ou de la clé USB à utiliser.
-6. Adapte `Physical.ini` si besoin (voir [Configuration](#configuration)).
-7. Lance le jeu.
+1. Open `Output/Import/x64/` or `Output/Import/x86/` depending on the game's architecture.
+2. Copy the following files into the game folder, next to the executable:
+   - `PhysicalNeverDies.dll`
+   - `PhysicalNeverDies.ini`
+3. Make a backup copy of the game's executable.
+4. Open the executable with **CFF Explorer**:
+   - go to **Import Directory**,
+   - right-click, then **Add**, and select `PhysicalNeverDies.dll`,
+   - tick the `check_disk` function,
+   - save the executable.
+5. Put `LicensePhysical.txt` at the root of the disc or USB drive you want to use.
+6. Adjust `PhysicalNeverDies.ini` if needed (see [Configuration](#configuration)).
+7. Launch the game.
 
-La fonction exportée `check_disk` ne fait rien. Elle sert uniquement à pouvoir ajouter la DLL à la table d'import. Le contrôle lui-même s'exécute au chargement de la DLL.
+The exported `check_disk` function does nothing. It only exists so the DLL can be added to the import table. The check itself runs when the DLL is loaded.
 
-> N'utilise pas le Hook et l'Import en même temps : une seule méthode suffit.
+> Do not use the Hook and the Import method at the same time: one method is enough.
 
 ## Configuration
 
-### `Physical.ini`
+### `PhysicalNeverDies.ini`
 
-Fourni dans chaque dossier. À placer à côté de l'exécutable du jeu (voir [Limitation connue](#limitation-connue)).
+Provided in every folder. Place it next to the game's executable (see [Known limitation](#known-limitation)).
 
-Scanner tous les lecteurs :
+Scan all drives:
 
 ```ini
 IsDiskNeeded = true
@@ -126,7 +126,7 @@ GameName = REPO
 #Drive = E:\
 ```
 
-Scanner uniquement `E:\` :
+Scan only `E:\`:
 
 ```ini
 IsDiskNeeded = true
@@ -134,43 +134,43 @@ GameName = REPO
 Drive = E:\
 ```
 
-| Clé | Valeur | Description |
+| Key | Value | Description |
 |---|---|---|
-| `IsDiskNeeded` | `true` / `false` | `false` désactive complètement la vérification. Par défaut : `true`. |
-| `GameName` | texte | Nom du jeu attendu dans la licence. Par défaut : `REPO`. |
-| `Drive` | `E:\`, `E:`, `E` | Optionnel. Si défini, seul ce lecteur est scanné. Si commenté, absent ou invalide, tous les lecteurs (`A:` à `Z:`) sont scannés. |
+| `IsDiskNeeded` | `true` / `false` | `false` disables the check entirely. Default: `true`. |
+| `GameName` | text | Game name expected in the license. Default: `REPO`. |
+| `Drive` | `E:\`, `E:`, `E` | Optional. If set, only this drive is scanned. If commented out, missing or invalid, all detected drives are scanned. |
 
-Les lignes vides et celles qui commencent par `#` ou `;` sont ignorées. Les clés ne sont pas sensibles à la casse.
+Empty lines and lines starting with `#` or `;` are ignored. Keys are case-insensitive.
 
-À propos de `Drive` :
+About `Drive`:
 
-- Les formats `E:\`, `E:`, `E:/` et `E` sont acceptés, en majuscule ou minuscule.
-- Une valeur invalide (par exemple `Drive = test` ou `Drive = E:\Dossier`) est ignorée et tous les lecteurs sont scannés.
+- The formats `E:\`, `E:`, `E:/` and `E` are accepted, in upper or lower case.
+- An invalid value (for example `Drive = test` or `Drive = E:\Folder`) is ignored and all drives are scanned.
 
 ### `LicensePhysical.txt`
 
-Fourni dans chaque dossier. À placer à la **racine d'un lecteur** (par exemple `D:\LicensePhysical.txt`, sur le disque ou la clé USB).
+Provided in every folder. Place it at the **root of a drive** (for example `D:\LicensePhysical.txt`, on the disc or USB drive).
 
 ```
 license = REPO
 ```
 
-La valeur doit correspondre au `GameName` de `Physical.ini`. La comparaison ignore la casse (`repo` et `REPO` sont acceptés). Pour une comparaison stricte, remplace `eq_ignore_ascii_case(target_game_name)` par `== target_game_name` dans `src/lib.rs`.
+The value must match the `GameName` in `PhysicalNeverDies.ini`. The comparison is case-insensitive (`repo` and `REPO` are both accepted). For a strict comparison, replace `eq_ignore_ascii_case(target_game_name)` with `== target_game_name` in `src/lib.rs`.
 
-Si tu changes `GameName` dans `Physical.ini`, modifie aussi `license` dans `LicensePhysical.txt` pour qu'ils restent identiques.
+If you change `GameName` in `PhysicalNeverDies.ini`, also change `license` in `LicensePhysical.txt` so that they stay identical.
 
-## Compilation
+## Building
 
-Prérequis : [Rust](https://rustup.rs/) avec la toolchain MSVC sous Windows.
+Requirements: [Rust](https://rustup.rs/) with the MSVC toolchain on Windows.
 
-### Structure du projet
+### Project structure
 
 ```
 physical/
 ├── Cargo.toml
 └── src/
-    ├── lib.rs     # logique de vérification
-    └── text.rs    # messages d'erreur traduits
+    ├── lib.rs     # check logic
+    └── text.rs    # translated error messages
 ```
 
 ### Cargo.toml
@@ -182,6 +182,7 @@ version = "1.0.0"
 edition = "2021"
 
 [lib]
+name = "PhysicalNeverDies"
 crate-type = ["cdylib"]
 
 [dependencies]
@@ -191,67 +192,68 @@ windows = { version = "0.52", features = [
     "Win32_System_LibraryLoader",
     "Win32_System_Diagnostics",
     "Win32_System_Diagnostics_Debug",
+    "Win32_Storage_FileSystem",
     "Win32_UI_WindowsAndMessaging",
     "Win32_Globalization",
 ] }
 ```
 
-Les features de `windows` sont obligatoires : sans elles, le compilateur renvoie des erreurs du type `cannot find Diagnostics in System`. Les features parent (`Win32_System_Diagnostics`) et enfant (`Win32_System_Diagnostics_Debug`) doivent être activées toutes les deux.
+The `windows` features are required: without them the compiler reports errors such as `cannot find Diagnostics in System`. Both the parent (`Win32_System_Diagnostics`) and child (`Win32_System_Diagnostics_Debug`) features must be enabled.
 
-### Commandes
+### Commands
 
 ```bash
-# 64 bits
+# 64-bit
 rustup target add x86_64-pc-windows-msvc
 cargo build --release --target x86_64-pc-windows-msvc
 
-# 32 bits
+# 32-bit
 rustup target add i686-pc-windows-msvc
 cargo build --release --target i686-pc-windows-msvc
 ```
 
-La DLL générée se trouve dans `target/<cible>/release/physical.dll`. Copie-la ensuite dans les dossiers `x64` ou `x86` correspondants de `Output/Hook/` et `Output/Import/` (renomme-la en `Physical.dll` si besoin).
+The generated DLL is located at `target/<target>/release/PhysicalNeverDies.dll`. Then copy it into the matching `x64` or `x86` folders of `Output/Hook/` and `Output/Import/`.
 
-## Langues des messages
+## Message languages
 
-La langue est détectée avec `GetUserDefaultUILanguage` (langue d'affichage de Windows). L'anglais est utilisé par défaut.
+The language is detected with `GetUserDefaultUILanguage` (the Windows display language). English is used by default.
 
-| Langue | Code |
+| Language | Code |
 |---|---|
-| Anglais | `0x09` |
-| Français | `0x0C` |
-| Allemand | `0x07` |
-| Espagnol | `0x0A` |
-| Italien | `0x10` |
-| Portugais | `0x16` |
+| English | `0x09` |
+| French | `0x0C` |
+| German | `0x07` |
+| Spanish | `0x0A` |
+| Italian | `0x10` |
+| Portuguese | `0x16` |
 
-### Ajouter une langue
+### Adding a language
 
-1. Ajoute une variante dans l'enum `Lang` de `src/text.rs`.
-2. Ajoute son code dans `detect_language()` (par exemple `0x19` pour le russe, `0x11` pour le japonais).
-3. Ajoute un bloc `match` pour cette langue dans `get()`. Le compilateur signale les cas oubliés.
+1. Add a variant to the `Lang` enum in `src/text.rs`.
+2. Add its code in `detect_language()` (for example `0x19` for Russian, `0x11` for Japanese).
+3. Add a `match` block for that language in `get()`. The compiler flags any missing case.
 
-## Messages d'erreur
+## Error messages
 
-| Cas | Identifiant | Quand |
+| Case | Identifier | When |
 |---|---|---|
-| Fichier introuvable | `FileNotFound` | `LicensePhysical.txt` n'existe ni sur le lecteur indiqué, ni sur aucun lecteur si `Drive` n'est pas défini. |
-| Licence invalide | `LicenseInvalid` | Le fichier existe mais ne contient pas `license = <GameName>`. |
-| Erreur de lecture | `ReadError` | Le fichier existe mais ne peut pas être lu. |
+| File not found | `FileNotFound` | `LicensePhysical.txt` does not exist on the specified drive, or on any drive if `Drive` is not set. |
+| Invalid license | `LicenseInvalid` | The file exists but does not contain `license = <GameName>`. |
+| Read error | `ReadError` | The file exists but cannot be read. |
 
-## Limitation connue
+## Known limitation
 
-`GetModuleFileNameW(HMODULE(0), ...)` renvoie le chemin de l'**exécutable** du jeu et non celui de la DLL. `Physical.ini` est donc cherché dans le dossier du `.exe`. Si la DLL est placée ailleurs, il faut utiliser `GetModuleHandleExW` avec le flag `GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS` sur l'adresse de `check_disk`.
+`GetModuleFileNameW(HMODULE(0), ...)` returns the path of the game's **executable**, not of the DLL. `PhysicalNeverDies.ini` is therefore looked up in the `.exe` folder. If the DLL is placed elsewhere, use `GetModuleHandleExW` with the `GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS` flag on the address of `check_disk`.
 
-## Dépannage
+## Troubleshooting
 
-| Problème | Piste |
+| Problem | Suggestion |
 |---|---|
-| Aucune vérification avec le Hook | Renomme `winmm.dll` en `version.dll` (un seul des deux à la fois) et vérifie que `Physical.dll` est dans le même dossier. |
-| Le jeu ne démarre pas du tout | Vérifie que les DLL ont la même architecture (x64 / x86) que le jeu. |
-| « Licence introuvable » alors que le disque est inséré | Vérifie que `LicensePhysical.txt` est bien **à la racine** du lecteur, et que `Drive` dans `Physical.ini` pointe vers le bon lecteur (ou est commenté). |
-| « Licence introuvable » alors que le fichier existe | Vérifie que `license` correspond bien au `GameName` de `Physical.ini`. |
-| La vérification ne se fait pas | Vérifie que `IsDiskNeeded` n'est pas à `false` et que `Physical.ini` est à côté de l'exécutable. |
-| Message en anglais alors que Windows est dans une autre langue | La langue n'est pas encore gérée dans `text.rs`, voir [Ajouter une langue](#ajouter-une-langue). |
-| Antivirus qui bloque `winmm.dll` | Les DLL proxy sont parfois détectées à tort. Ajoute une exclusion pour le dossier du jeu. |
-| Erreur `cannot find Diagnostics in System` à la compilation | Ajoute `Win32_System_Diagnostics` et `Win32_System_Diagnostics_Debug` aux features de `windows` dans `Cargo.toml`. |
+| No check with the Hook | Rename `winmm.dll` to `version.dll` (only one of the two at a time) and make sure `PhysicalNeverDies.dll` is in the same folder. |
+| The game does not start at all | Make sure the DLLs have the same architecture (x64 / x86) as the game. |
+| "License not found" although the disc is inserted | Make sure `LicensePhysical.txt` is at the **root** of the drive, and that `Drive` in `PhysicalNeverDies.ini` points to the right drive (or is commented out). |
+| "License not found" although the file exists | Make sure `license` matches the `GameName` in `PhysicalNeverDies.ini`. |
+| The check does not run | Make sure `IsDiskNeeded` is not set to `false` and that `PhysicalNeverDies.ini` is next to the executable. |
+| Message in English although Windows uses another language | The language is not supported yet in `text.rs`, see [Adding a language](#adding-a-language). |
+| Antivirus blocks `winmm.dll` | Proxy DLLs are sometimes flagged by mistake. Add an exclusion for the game folder. |
+| `cannot find Diagnostics in System` error when building | Add `Win32_System_Diagnostics` and `Win32_System_Diagnostics_Debug` to the `windows` features in `Cargo.toml`. |

@@ -1,33 +1,48 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use windows::Win32::Foundation::{HMODULE, HWND};
+use windows::Win32::Storage::FileSystem::{GetDriveTypeW, GetLogicalDrives};
 use windows::Win32::System::Diagnostics::Debug::{SetErrorMode, SEM_FAILCRITICALERRORS};
 use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
 use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
-use windows::core::HSTRING;
+use windows::core::{HSTRING, PCWSTR};
 
 mod text;
 use text::MsgId;
 
 const LICENSE_FILE_NAME: &str = "LicensePhysical.txt";
+const CONFIG_FILE_NAME: &str = "PhysicalNeverDies.ini";
 
-/// Configuration lue depuis "Physical.ini"
+// Types de lecteurs retournés par GetDriveTypeW
+const DRIVE_REMOVABLE: u32 = 2; // clé USB, disquette
+const DRIVE_FIXED: u32 = 3; // disque dur / SSD
+const DRIVE_CDROM: u32 = 5; // CD / DVD / Blu-ray
+
+/// Configuration lue depuis "PhysicalNeverDies.ini"
 struct Config {
     is_disk_needed: bool,
     game_name: String,
-    /// Lecteur à scanner (None = scanner tous les lecteurs de A: à Z:)
+    /// Lecteur à scanner (None = scanner tous les lecteurs détectés)
     drive: Option<char>,
+}
+
+/// Résultat de la vérification sur un lecteur
+enum DriveCheck {
+    Valid,
+    Invalid,
+    ReadError,
+    Missing,
 }
 
 /// S'exécute automatiquement et immédiatement au chargement de la DLL
 #[ctor::ctor]
 fn init() {
-    // Évite les boîtes système "Insérez un disque" sur les lecteurs A: et B: (ou lecteurs vides)
+    // Évite les boîtes système "Insérez un disque" sur les lecteurs vides ou absents
     unsafe {
         SetErrorMode(SEM_FAILCRITICALERRORS);
     }
 
-    // 1. Charger la configuration depuis "Physical.ini"
+    // 1. Charger la configuration depuis "PhysicalNeverDies.ini"
     let config = load_companion_config();
 
     // Si le check disque est désactivé, on laisse le jeu se lancer
@@ -41,7 +56,7 @@ fn init() {
     }
 }
 
-/// Lit le fichier "Physical.ini"
+/// Lit le fichier "PhysicalNeverDies.ini"
 fn load_companion_config() -> Config {
     let mut config = Config {
         is_disk_needed: true,
@@ -89,7 +104,7 @@ fn parse_drive_letter(val: &str) -> Option<char> {
     }
 }
 
-/// Récupère le chemin de "Physical.ini" (même dossier que le module)
+/// Récupère le chemin de "PhysicalNeverDies.ini" (même dossier que l'exécutable)
 fn get_companion_ini_path() -> Option<PathBuf> {
     let mut buffer = vec![0u16; 32768];
     unsafe {
@@ -99,61 +114,98 @@ fn get_companion_ini_path() -> Option<PathBuf> {
         }
         let dll_path = String::from_utf16_lossy(&buffer[..len as usize]);
         let path = Path::new(&dll_path);
-        Some(path.with_file_name("Physical.ini"))
+        Some(path.with_file_name(CONFIG_FILE_NAME))
     }
 }
 
-/// Cherche "LicensePhysical.txt" sur le lecteur demandé (ou sur tous les lecteurs
-/// de A:\ à Z:\ si aucun n'est précisé) et vérifie que license == GameName
+/// Type du lecteur (lettre) selon Windows
+fn drive_type(letter: char) -> u32 {
+    let root: Vec<u16> = format!("{}:\\", letter)
+        .encode_utf16()
+        .chain(std::iter::once(0))
+        .collect();
+    unsafe { GetDriveTypeW(PCWSTR(root.as_ptr())) }
+}
+
+/// Liste des lecteurs à tester.
+/// - Si un lecteur est imposé dans le .ini, on teste uniquement celui-ci.
+/// - Sinon, on prend les lecteurs existants de type fixe, amovible ou optique
+///   (les lecteurs réseau sont ignorés pour éviter les blocages).
+fn candidate_drives(forced: Option<char>) -> Vec<char> {
+    if let Some(letter) = forced {
+        return vec![letter];
+    }
+
+    let mask = unsafe { GetLogicalDrives() };
+    (0..26u32)
+        .filter(|i| mask & (1 << i) != 0)
+        .map(|i| (b'A' + i as u8) as char)
+        .filter(|&letter| {
+            let t = drive_type(letter);
+            t == DRIVE_REMOVABLE || t == DRIVE_FIXED || t == DRIVE_CDROM
+        })
+        .collect()
+}
+
+/// Vérifie si le contenu du fichier contient "license = <GameName>"
+fn license_matches(content: &str, target_game_name: &str) -> bool {
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        if let Some((key, val)) = line.split_once('=') {
+            if key.trim().eq_ignore_ascii_case("license")
+                && val.trim().eq_ignore_ascii_case(target_game_name)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Vérifie la licence sur un lecteur donné
+fn check_drive(letter: char, target_game_name: &str) -> DriveCheck {
+    let path = PathBuf::from(format!("{}:\\{}", letter, LICENSE_FILE_NAME));
+    if !path.exists() {
+        return DriveCheck::Missing;
+    }
+    match fs::read_to_string(&path) {
+        Ok(content) => {
+            if license_matches(&content, target_game_name) {
+                DriveCheck::Valid
+            } else {
+                DriveCheck::Invalid
+            }
+        }
+        Err(_) => DriveCheck::ReadError,
+    }
+}
+
+/// Cherche "LicensePhysical.txt" sur les lecteurs candidats et vérifie que license == GameName.
+/// Réussit dès qu'un lecteur contient une licence valide.
 fn validate_license_on_drives(target_game_name: &str, drive: Option<char>) -> bool {
-    let drives: Vec<char> = match drive {
-        Some(letter) => vec![letter],
-        None => (b'A'..=b'Z').map(|b| b as char).collect(),
-    };
+    let mut found_invalid = false;
+    let mut found_read_error = false;
 
-    let mut license_path: Option<PathBuf> = None;
-
-    for drive_letter in drives {
-        let path = PathBuf::from(format!("{}:\\{}", drive_letter, LICENSE_FILE_NAME));
-        if path.exists() {
-            license_path = Some(path);
-            break;
+    for letter in candidate_drives(drive) {
+        match check_drive(letter, target_game_name) {
+            DriveCheck::Valid => return true,
+            DriveCheck::Invalid => found_invalid = true,
+            DriveCheck::ReadError => found_read_error = true,
+            DriveCheck::Missing => {}
         }
     }
 
-    let path = match license_path {
-        Some(p) => p,
-        None => {
-            show_localized_error(MsgId::FileNotFound);
-            return false;
-        }
+    let error = if found_invalid {
+        MsgId::LicenseInvalid
+    } else if found_read_error {
+        MsgId::ReadError
+    } else {
+        MsgId::FileNotFound
     };
-
-    if let Ok(content) = fs::read_to_string(path) {
-        let mut found_license = false;
-        for line in content.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
-                continue;
-            }
-            if let Some((key, val)) = line.split_once('=') {
-                if key.trim().eq_ignore_ascii_case("license")
-                    && val.trim().eq_ignore_ascii_case(target_game_name)
-                {
-                    found_license = true;
-                    break;
-                }
-            }
-        }
-
-        if !found_license {
-            show_localized_error(MsgId::LicenseInvalid);
-            return false;
-        }
-        return true;
-    }
-
-    show_localized_error(MsgId::ReadError);
+    show_localized_error(error);
     false
 }
 
